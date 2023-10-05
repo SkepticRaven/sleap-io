@@ -66,7 +66,9 @@ JABS_DEFAULT_SKELETON = Skeleton(
 
 
 def read_labels(
-    labels_path: str, skeleton: Optional[Skeleton] = JABS_DEFAULT_SKELETON
+    labels_path: str,
+    skeleton: Optional[Skeleton] = JABS_DEFAULT_SKELETON,
+    num_frames: Optional[int] = None,
 ) -> Labels:
     """Read JABS style pose from a file and return a `Labels` object.
 
@@ -77,6 +79,7 @@ def read_labels(
     Args:
         labels_path: Path to the JABS pose file.
         skeleton: An optional `Skeleton` object. Defaults to JABS pose version 2-6.
+        num_frames: Optional number of frames to read in.
 
     Returns:
         Parsed labels as a `Labels` instance.
@@ -94,7 +97,12 @@ def read_labels(
         raise PermissionError(f"{labels_path} cannot be accessed.")
 
     with h5py.File(labels_path, "r") as pose_file:
-        num_frames = pose_file["poseest/points"].shape[0]
+        detected_num_frames = pose_file["poseest/points"].shape[0]
+        if num_frames and detected_num_frames < num_frames:
+            num_frames = detected_num_frames
+        else:
+            num_frames = detected_num_frames
+
         try:
             pose_version = pose_file["poseest"].attrs["version"][0]
         except (KeyError, IndexError):
