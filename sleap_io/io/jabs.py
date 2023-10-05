@@ -64,6 +64,12 @@ JABS_DEFAULT_SKELETON = Skeleton(
     JABS_DEFAULT_KEYPOINTS, JABS_DEFAULT_EDGES, JABS_DEFAULT_SYMMETRIES, name="Mouse"
 )
 
+# Keys of static objects that are stored in y,x instead of x,y order
+FLIPPED_OBJECTS = [
+    "lixit",
+    "food_hopper",
+]
+
 
 def read_labels(
     labels_path: str,
@@ -162,6 +168,8 @@ def read_labels(
                 present_objects = pose_file["static_objects"].keys()
                 for cur_object in present_objects:
                     object_keypoints = pose_file["static_objects/" + cur_object][:]
+                    if cur_object in FLIPPED_OBJECTS:
+                        object_keypoints = np.flip(object_keypoints, axis=-1)
                     object_skeleton = make_simple_skeleton(
                         cur_object, object_keypoints.shape[0]
                     )
@@ -532,6 +540,16 @@ def write_jabs_v5(data: dict, filename: str):
     """
     # v5 extends v4
     write_jabs_v4(data, filename)
+    write_static_objects(data, filename)
+
+
+def write_static_objects(data: dict, filename: str):
+    """Write static object data to a JABS pose file.
+
+    Args:
+        data: Dictionary of JABS data generated from convert_labels
+        filename: Filename to write data to
+    """
     with h5py.File(filename, "a") as h5:
         pose_grp = h5.require_group("poseest")
         pose_grp.attrs.update({"version": [5, 0]})
