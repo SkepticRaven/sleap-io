@@ -104,8 +104,9 @@ def read_labels(
 
     with h5py.File(labels_path, "r") as pose_file:
         detected_num_frames = pose_file["poseest/points"].shape[0]
-        if num_frames and detected_num_frames < num_frames:
-            num_frames = detected_num_frames
+        if num_frames:
+            if detected_num_frames < num_frames:
+                num_frames = detected_num_frames
         else:
             num_frames = detected_num_frames
 
