@@ -268,10 +268,10 @@ def convert_labels(all_labels: Labels, video: Video) -> dict:
 
     # Determine shape of output
     # Low estimate of last frame labeled
-    num_frames = max([x.frame_idx for x in labels]) + 1
+    num_frames = int(max([x.frame_idx for x in labels]) + 1)
     # If there is metadata available for the video, use that
     if video.shape:
-        num_frames = max(num_frames, video.shape[0])
+        num_frames = int(max(num_frames, video.shape[0]))
     num_keypoints = [len(x.nodes) for x in all_labels.skeletons if x.name == "Mouse"][0]
     num_mice = get_max_ids_in_video(labels, key="Mouse")
     # Note that this 1-indexes identities
