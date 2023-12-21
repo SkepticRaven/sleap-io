@@ -557,6 +557,10 @@ def write_static_objects(data: dict, filename: str):
         if "static_objects" in data.keys():
             object_grp = h5.require_group("static_objects")
             for object_key, object_keypoints in data["static_objects"].items():
+                if object_key in FLIPPED_OBJECTS:
+                    object_keypoints = np.flip(object_keypoints, axis=-1)
+                if object_grp[object_key]:
+                    del object_grp[object_key]
                 object_grp.require_dataset(
                     object_key,
                     object_keypoints.shape,
