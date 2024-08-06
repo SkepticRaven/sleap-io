@@ -279,7 +279,12 @@ def convert_labels(all_labels: Labels, video: Video) -> dict:
     # If there is metadata available for the video, use that
     if video.shape:
         num_frames = int(max(num_frames, video.shape[0]))
-    num_keypoints = [len(x.nodes) for x in all_labels.skeletons if x.name == "Mouse"][0]
+    num_keypoints = [len(x.nodes) for x in all_labels.skeletons if x.name == "Mouse"]
+    if len(num_keypoints) == 0:
+        num_keypoints = 12
+    else:
+        num_keypoints = num_keypoints[0]
+
     num_mice = get_max_ids_in_video(labels, key="Mouse")
     # Note that this 1-indexes identities
     track_2_idx = {
@@ -292,6 +297,7 @@ def convert_labels(all_labels: Labels, video: Video) -> dict:
     confidence_mat = np.zeros([num_frames, num_mice, num_keypoints], dtype=np.float32)
     identity_mat = np.zeros([num_frames, num_mice], dtype=np.uint32)
     instance_vector = np.zeros([num_frames], dtype=np.uint8)
+
     static_objects = {}
 
     # Populate the matrices with data
@@ -566,7 +572,7 @@ def write_static_objects(data: dict, filename: str):
             for object_key, object_keypoints in data["static_objects"].items():
                 if object_key in FLIPPED_OBJECTS:
                     object_keypoints = np.flip(object_keypoints, axis=-1)
-                if object_grp[object_key]:
+                if object_key in object_grp:
                     del object_grp[object_key]
                 object_grp.require_dataset(
                     object_key,
