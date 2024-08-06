@@ -1,6 +1,7 @@
 """Backends for reading and writing videos."""
 
 from __future__ import annotations
+from pathlib import Path
 
 import simplejson as json
 import sys
@@ -42,7 +43,7 @@ class VideoBackend:
     constructor to create a backend instance.
 
     Attributes:
-        filename: Path to video file.
+        filename: Path to video file(s).
         grayscale: Whether to force grayscale. If None, autodetect on first frame load.
         keep_open: Whether to keep the video reader open between calls to read frames.
             If False, will close the reader after each call. If True (the default), it
@@ -50,7 +51,7 @@ class VideoBackend:
             enhance the performance of reading multiple frames.
     """
 
-    filename: str
+    filename: str | Path | list[str] | list[Path]
     grayscale: Optional[bool] = None
     keep_open: bool = True
     _cached_shape: Optional[Tuple[int, int, int, int]] = None
@@ -59,7 +60,7 @@ class VideoBackend:
     @classmethod
     def from_filename(
         cls,
-        filename: str,
+        filename: str | list[str],
         dataset: Optional[str] = None,
         grayscale: Optional[bool] = None,
         keep_open: bool = True,
@@ -68,7 +69,7 @@ class VideoBackend:
         """Create a VideoBackend from a filename.
 
         Args:
-            filename: Path to video file.
+            filename: Path to video file(s).
             dataset: Name of dataset in HDF5 file.
             grayscale: Whether to force grayscale. If None, autodetect on first frame
                 load.
@@ -80,10 +81,22 @@ class VideoBackend:
         Returns:
             VideoBackend subclass instance.
         """
-        if type(filename) != str:
-            filename = str(filename)
+        if isinstance(filename, Path):
+            filename = filename.as_posix()
 
-        if filename.endswith(MediaVideo.EXTS):
+        if type(filename) == str and Path(filename).is_dir():
+            filename = ImageVideo.find_images(filename)
+
+        if type(filename) == list:
+            filename = [Path(f).as_posix() for f in filename]
+            return ImageVideo(
+                filename, grayscale=grayscale, **_get_valid_kwargs(ImageVideo, kwargs)
+            )
+        elif filename.endswith(ImageVideo.EXTS):
+            return ImageVideo(
+                [filename], grayscale=grayscale, **_get_valid_kwargs(ImageVideo, kwargs)
+            )
+        elif filename.endswith(MediaVideo.EXTS):
             return MediaVideo(
                 filename,
                 grayscale=grayscale,
@@ -106,8 +119,8 @@ class VideoBackend:
         raise NotImplementedError
 
     def _read_frames(self, frame_inds: list) -> np.ndarray:
-        """Read a list of frames from the video. Must be implemented in subclasses."""
-        return np.stack([self._read_frame(i) for i in frame_inds], axis=0)
+        """Read a list of frames from the video."""
+        return np.stack([self.get_frame(i) for i in frame_inds], axis=0)
 
     def read_test_frame(self) -> np.ndarray:
         """Read a single frame from the video to test for grayscale.
@@ -146,8 +159,15 @@ class VideoBackend:
 
     @property
     def img_shape(self) -> Tuple[int, int, int]:
-        """Shape of a single frame in the video. Must be implemented in subclasses."""
-        return self.get_frame(0).shape
+        """Shape of a single frame in the video."""
+        height, width, channels = self.read_test_frame().shape
+        if self.grayscale is None:
+            self.detect_grayscale()
+        if self.grayscale is False:
+            channels = 3
+        elif self.grayscale is True:
+            channels = 1
+        return int(height), int(width), int(channels)
 
     @property
     def shape(self) -> Tuple[int, int, int, int]:
@@ -465,6 +485,8 @@ class HDF5Video(VideoBackend):
             when reading embedded image datasets.
         source_inds: Indices of the frames in the source video file. This is metadata
             and only used when reading embedded image datasets.
+        image_format: Format of the images in the embedded dataset. This is metadata and
+            only used when reading embedded image datasets.
     """
 
     dataset: Optional[str] = None
@@ -475,6 +497,7 @@ class HDF5Video(VideoBackend):
     frame_map: dict[int, int] = attrs.field(init=False, default=attrs.Factory(dict))
     source_filename: Optional[str] = None
     source_inds: Optional[np.ndarray] = None
+    image_format: str = "hdf5"
 
     EXTS = ("h5", "hdf5", "slp")
 
@@ -517,8 +540,11 @@ class HDF5Video(VideoBackend):
             # This may be an embedded video dataset. Check for frame map.
             ds = f[self.dataset]
 
+            if "format" in ds.attrs:
+                self.image_format = ds.attrs["format"]
+
             if "frame_numbers" in ds.parent:
-                frame_numbers = ds.parent["frame_numbers"][:]
+                frame_numbers = ds.parent["frame_numbers"][:].astype(int)
                 self.frame_map = {frame: idx for idx, frame in enumerate(frame_numbers)}
                 self.source_inds = frame_numbers
 
@@ -550,7 +576,7 @@ class HDF5Video(VideoBackend):
                 img_shape = ds.shape[1:]
         if self.input_format == "channels_first":
             img_shape = img_shape[::-1]
-        return img_shape
+        return int(img_shape[0]), int(img_shape[1]), int(img_shape[2])
 
     def read_test_frame(self) -> np.ndarray:
         """Read a single frame from the video to test for grayscale."""
@@ -558,22 +584,24 @@ class HDF5Video(VideoBackend):
             frame_idx = list(self.frame_map.keys())[0]
         else:
             frame_idx = 0
-        return self.read_frame(frame_idx)
+        return self._read_frame(frame_idx)
 
     @property
     def has_embedded_images(self) -> bool:
         """Return True if the dataset contains embedded images."""
-        with h5py.File(self.filename, "r") as f:
-            ds = f[self.dataset]
-            return "format" in ds.attrs
+        return self.image_format is not None and self.image_format != "hdf5"
 
-    def decode_embedded(self, img_string: np.ndarray, format: str) -> np.ndarray:
+    @property
+    def embedded_frame_inds(self) -> list[int]:
+        """Return the frame indices of the embedded images."""
+        return list(self.frame_map.keys())
+
+    def decode_embedded(self, img_string: np.ndarray) -> np.ndarray:
         """Decode an embedded image string into a numpy array.
 
         Args:
             img_string: Binary string of the image as a `int8` numpy vector with the
                 bytes as values corresponding to the format-encoded image.
-            format: Image format (e.g., "png" or "jpg").
 
         Returns:
             The decoded image as a numpy array of shape `(height, width, channels)`. If
@@ -586,7 +614,7 @@ class HDF5Video(VideoBackend):
         if "cv2" in sys.modules:
             img = cv2.imdecode(img_string, cv2.IMREAD_UNCHANGED)
         else:
-            img = iio.imread(BytesIO(img_string), extension=f".{format}")
+            img = iio.imread(BytesIO(img_string), extension=f".{self.image_format}")
 
         if img.ndim == 2:
             img = np.expand_dims(img, axis=-1)
@@ -619,8 +647,8 @@ class HDF5Video(VideoBackend):
 
         img = ds[frame_idx]
 
-        if "format" in ds.attrs:
-            img = self.decode_embedded(img, ds.attrs["format"])
+        if self.has_embedded_images:
+            img = self.decode_embedded(img)
 
         if self.input_format == "channels_first":
             img = np.transpose(img, (2, 1, 0))
@@ -657,7 +685,7 @@ class HDF5Video(VideoBackend):
 
         if "format" in ds.attrs:
             imgs = np.stack(
-                [self.decode_embedded(img, ds.attrs["format"]) for img in imgs],
+                [self.decode_embedded(img) for img in imgs],
                 axis=0,
             )
 
@@ -668,3 +696,48 @@ class HDF5Video(VideoBackend):
             f.close()
 
         return imgs
+
+
+@attrs.define
+class ImageVideo(VideoBackend):
+    """Video backend for reading videos stored as image files.
+
+    This backend supports reading videos stored as a list of images.
+
+    Attributes:
+        filename: Path to image files.
+        grayscale: Whether to force grayscale. If None, autodetect on first frame load.
+    """
+
+    EXTS = ("png", "jpg", "jpeg", "tif", "tiff", "bmp")
+
+    @staticmethod
+    def find_images(folder: str) -> list[str]:
+        """Find images in a folder and return a list of filenames."""
+        folder = Path(folder)
+        return sorted(
+            [f.as_posix() for f in folder.glob("*") if f.suffix[1:] in ImageVideo.EXTS]
+        )
+
+    @property
+    def num_frames(self) -> int:
+        """Number of frames in the video."""
+        return len(self.filename)
+
+    def _read_frame(self, frame_idx: int) -> np.ndarray:
+        """Read a single frame from the video.
+
+        Args:
+            frame_idx: Index of frame to read.
+
+        Returns:
+            The frame as a numpy array of shape `(height, width, channels)`.
+
+        Notes:
+            This does not apply grayscale conversion. It is recommended to use the
+            `get_frame` method of the `VideoBackend` class instead.
+        """
+        img = iio.imread(self.filename[frame_idx])
+        if img.ndim == 2:
+            img = np.expand_dims(img, axis=-1)
+        return img

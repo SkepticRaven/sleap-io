@@ -1,5 +1,7 @@
 """This module handles direct I/O operations for working with JABS files."""
 
+from __future__ import annotations
+
 import h5py
 import re
 import os
@@ -93,6 +95,7 @@ def read_labels(
     frames: List[LabeledFrame] = []
     # Video name is the pose file minus the suffix
     video_name = re.sub(r"(_pose_est_v[2-6])?\.h5", ".avi", labels_path)
+    video = Video.from_filename(video_name)
     if not skeleton:
         skeleton = JABS_DEFAULT_SKELETON
     tracks = {}
@@ -181,9 +184,11 @@ def read_labels(
                     )
                     if new_instance:
                         instances.append(new_instance)
-            frame_label = LabeledFrame(Video(video_name), frame_idx, instances)
+            frame_label = LabeledFrame(video, frame_idx, instances)
             frames.append(frame_label)
-    return Labels(frames)
+    labels = Labels(frames)
+    labels.provenance["filename"] = labels_path
+    return labels
 
 
 def make_simple_skeleton(name: str, num_points: int) -> Skeleton:
@@ -210,8 +215,10 @@ def prediction_to_instance(
     """Create an `Instance` from prediction data.
 
     Args:
-        points: keypoint locations
+        data: keypoint locations
         confidence: confidence for keypoints
+        skeleton: `Skeleton` to use for `Instance`
+        track: `Track` to assign to `Instance`
 
     Returns:
         Parsed `Instance`.

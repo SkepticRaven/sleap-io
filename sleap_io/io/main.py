@@ -1,7 +1,7 @@
 """This module contains high-level wrappers for utilizing different I/O backends."""
 
 from __future__ import annotations
-from sleap_io import Labels, Skeleton
+from sleap_io import Labels, Skeleton, Video
 from sleap_io.io import slp, nwb, labelstudio, jabs
 from typing import Optional, Union
 from pathlib import Path
@@ -19,14 +19,32 @@ def load_slp(filename: str) -> Labels:
     return slp.read_labels(filename)
 
 
-def save_slp(labels: Labels, filename: str):
+def save_slp(
+    labels: Labels,
+    filename: str,
+    embed: bool | str | list[tuple[Video, int]] | None = None,
+):
     """Save a SLEAP dataset to a `.slp` file.
 
     Args:
         labels: A SLEAP `Labels` object (see `load_slp`).
         filename: Path to save labels to ending with `.slp`.
+        embed: Frames to embed in the saved labels file. One of `None`, `True`,
+            `"all"`, `"user"`, `"suggestions"`, `"user+suggestions"`, `"source"` or list
+            of tuples of `(video, frame_idx)`.
+
+            If `None` is specified (the default) and the labels contains embedded
+            frames, those embedded frames will be re-saved to the new file.
+
+            If `True` or `"all"`, all labeled frames and suggested frames will be
+            embedded.
+
+            If `"source"` is specified, no images will be embedded and the source video
+            will be restored if available.
+
+            This argument is only valid for the SLP backend.
     """
-    return slp.write_labels(filename, labels)
+    return slp.write_labels(filename, labels, embed=embed)
 
 
 def load_nwb(filename: str) -> Labels:
@@ -64,7 +82,7 @@ def load_labelstudio(
     """Read Label Studio-style annotations from a file and return a `Labels` object.
 
     Args:
-        labels_path: Path to the label-studio annotation file in JSON format.
+        filename: Path to the label-studio annotation file in JSON format.
         skeleton: An optional `Skeleton` object or list of node names. If not provided
             (the default), skeleton will be inferred from the data. It may be useful to
             provide this so the keypoint label types can be filtered to just the ones in
@@ -77,7 +95,12 @@ def load_labelstudio(
 
 
 def save_labelstudio(labels: Labels, filename: str):
-    """Save a SLEAP dataset to Label Studio format."""
+    """Save a SLEAP dataset to Label Studio format.
+
+    Args:
+        labels: A SLEAP `Labels` object (see `load_slp`).
+        filename: Path to save labels to ending with `.json`.
+    """
     labelstudio.write_labels(labels, filename)
 
 
@@ -98,11 +121,113 @@ def load_jabs(
 
 
 def save_jabs(labels: Labels, pose_version: int, root_folder: Optional[str] = None):
-    """Save a SLEAP dataset to JABS pose file format. Filenames for JABS poses are based on video filenames.
+    """Save a SLEAP dataset to JABS pose file format.
 
     Args:
-        labels: SLEAP `Labels` object
-        pose_version: The JABS pose version to write data out
-        root_folder: Optional root folder where the files should be saved
+        labels: SLEAP `Labels` object.
+        pose_version: The JABS pose version to write data out.
+        root_folder: Optional root folder where the files should be saved.
+
+    Note:
+        Filenames for JABS poses are based on video filenames.
     """
     jabs.write_labels(labels, pose_version, root_folder)
+
+
+def load_video(filename: str, **kwargs) -> Video:
+    """Load a video file.
+
+    Args:
+        filename: The filename(s) of the video. Supported extensions: "mp4", "avi",
+            "mov", "mj2", "mkv", "h5", "hdf5", "slp", "png", "jpg", "jpeg", "tif",
+            "tiff", "bmp". If the filename is a list, a list of image filenames are
+            expected. If filename is a folder, it will be searched for images.
+
+    Returns:
+        A `Video` object.
+    """
+    return Video.from_filename(filename, **kwargs)
+
+
+def load_file(
+    filename: str | Path, format: Optional[str] = None, **kwargs
+) -> Union[Labels, Video]:
+    """Load a file and return the appropriate object.
+
+    Args:
+        filename: Path to a file.
+        format: Optional format to load as. If not provided, will be inferred from the
+            file extension. Available formats are: "slp", "nwb", "labelstudio", "jabs"
+            and "video".
+
+    Returns:
+        A `Labels` or `Video` object.
+    """
+    if isinstance(filename, Path):
+        filename = filename.as_posix()
+
+    if format is None:
+        if filename.endswith(".slp"):
+            format = "slp"
+        elif filename.endswith(".nwb"):
+            format = "nwb"
+        elif filename.endswith(".json"):
+            format = "json"
+        elif filename.endswith(".h5"):
+            format = "jabs"
+        else:
+            for vid_ext in Video.EXTS:
+                if filename.endswith(vid_ext):
+                    format = "video"
+                    break
+        if format is None:
+            raise ValueError(f"Could not infer format from filename: '{filename}'.")
+
+    if filename.endswith(".slp"):
+        return load_slp(filename, **kwargs)
+    elif filename.endswith(".nwb"):
+        return load_nwb(filename, **kwargs)
+    elif filename.endswith(".json"):
+        return load_labelstudio(filename, **kwargs)
+    elif filename.endswith(".h5"):
+        return load_jabs(filename, **kwargs)
+    elif format == "video":
+        return load_video(filename, **kwargs)
+
+
+def save_file(
+    labels: Labels, filename: str | Path, format: Optional[str] = None, **kwargs
+):
+    """Save a file based on the extension.
+
+    Args:
+        labels: A SLEAP `Labels` object (see `load_slp`).
+        filename: Path to save labels to.
+        format: Optional format to save as. If not provided, will be inferred from the
+            file extension. Available formats are: "slp", "nwb", "labelstudio" and
+            "jabs".
+    """
+    if isinstance(filename, Path):
+        filename = str(filename)
+
+    if format is None:
+        if filename.endswith(".slp"):
+            format = "slp"
+        elif filename.endswith(".nwb"):
+            format = "nwb"
+        elif filename.endswith(".json"):
+            format = "labelstudio"
+        elif "pose_version" in kwargs:
+            format = "jabs"
+
+    if format == "slp":
+        save_slp(labels, filename, **kwargs)
+    elif format == "nwb":
+        save_nwb(labels, filename, **kwargs)
+    elif format == "labelstudio":
+        save_labelstudio(labels, filename, **kwargs)
+    elif format == "jabs":
+        pose_version = kwargs.pop("pose_version", 5)
+        save_jabs(labels, pose_version, filename, **kwargs)
+    else:
+        raise ValueError(f"Unknown format '{format}' for filename: '{filename}'.")

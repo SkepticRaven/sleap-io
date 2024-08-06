@@ -1,4 +1,5 @@
 """Functions to write and read from the neurodata without borders (NWB) format."""
+
 from copy import deepcopy
 from typing import List, Optional, Union
 from pathlib import Path
@@ -91,12 +92,12 @@ def read_nwb(path: str) -> Labels:
                     frame_inds = np.searchsorted(
                         timestamps, get_timestamps(pose_estimation_series)
                     )
-                    tracks_numpy[
-                        frame_inds, track_idx, node_idx, :
-                    ] = pose_estimation_series.data[:]
-                    confidence[
-                        frame_inds, track_idx, node_idx
-                    ] = pose_estimation_series.confidence[:]
+                    tracks_numpy[frame_inds, track_idx, node_idx, :] = (
+                        pose_estimation_series.data[:]
+                    )
+                    confidence[frame_inds, track_idx, node_idx] = (
+                        pose_estimation_series.confidence[:]
+                    )
 
             video_tracks[Path(pose_estimation.original_videos[0]).as_posix()] = (
                 tracks_numpy,
@@ -139,6 +140,7 @@ def read_nwb(path: str) -> Labels:
                     LabeledFrame(video=video, frame_idx=frame_idx, instances=insts)
                 )
     labels = Labels(lfs)
+    labels.provenance["filename"] = path
     return labels
 
 
@@ -330,7 +332,7 @@ def build_pose_estimation_container_for_track(
 
     Args:
         labels_data_df (pd.DataFrame): A pandas object with the data corresponding
-        to the predicted instances associated to this labels object.
+            to the predicted instances associated to this labels object.
         labels (Labels): A general labels object
         track_name (str): The name of the track in labels.tracks
         video (Video): The video to which data belongs to
@@ -399,7 +401,7 @@ def build_track_pose_estimation_list(
 
     Args:
         track_data_df (pd.DataFrame): A pandas DataFrame object containing the
-        trajectories for all the nodes associated with a specific track.
+            trajectories for all the nodes associated with a specific track.
 
     Returns:
         List[PoseEstimationSeries]: The list of all the PoseEstimationSeries.

@@ -1,4 +1,5 @@
 """Tests for functions in the sleap_io.io.slp file."""
+
 from sleap_io import (
     Video,
     Skeleton,
@@ -11,6 +12,7 @@ from sleap_io import (
     PredictedPoint,
     PredictedInstance,
     Labels,
+    SuggestionFrame,
 )
 from sleap_io.io.slp import (
     read_videos,
@@ -28,9 +30,16 @@ from sleap_io.io.slp import (
     write_lfs,
     read_labels,
     write_labels,
+    read_suggestions,
+    write_suggestions,
 )
 from sleap_io.io.utils import read_hdf5_dataset
 import numpy as np
+import simplejson as json
+import pytest
+from pathlib import Path
+
+from sleap_io.io.video import ImageVideo, HDF5Video, MediaVideo
 
 
 def test_read_labels(slp_typical, slp_simple_skel, slp_minimal):
@@ -95,17 +104,27 @@ def test_read_videos_pkg(slp_minimal_pkg):
 
 
 def test_write_videos(slp_minimal_pkg, centered_pair, tmp_path):
-    videos = read_videos(slp_minimal_pkg)
-    write_videos(tmp_path / "test_minimal_pkg.slp", videos)
-    json_fixture = read_hdf5_dataset(slp_minimal_pkg, "videos_json")
-    json_test = read_hdf5_dataset(tmp_path / "test_minimal_pkg.slp", "videos_json")
-    assert json_fixture == json_test
 
-    videos = read_videos(centered_pair)
-    write_videos(tmp_path / "test_centered_pair.slp", videos)
-    json_fixture = read_hdf5_dataset(centered_pair, "videos_json")
-    json_test = read_hdf5_dataset(tmp_path / "test_centered_pair.slp", "videos_json")
-    assert json_fixture == json_test
+    def compare_videos(videos_ref, videos_test):
+        assert len(videos_ref) == len(videos_test)
+        for video_ref, video_test in zip(videos_ref, videos_test):
+            assert video_ref.shape == video_test.shape
+            assert (video_ref[0] == video_test[0]).all()
+
+    videos_ref = read_videos(slp_minimal_pkg)
+    write_videos(tmp_path / "test_minimal_pkg.slp", videos_ref)
+    videos_test = read_videos(tmp_path / "test_minimal_pkg.slp")
+    compare_videos(videos_ref, videos_test)
+
+    videos_ref = read_videos(centered_pair)
+    write_videos(tmp_path / "test_centered_pair.slp", videos_ref)
+    videos_test = read_videos(tmp_path / "test_centered_pair.slp")
+    compare_videos(videos_ref, videos_test)
+
+    videos = read_videos(centered_pair) * 2
+    write_videos(tmp_path / "test_centered_pair_2vids.slp", videos)
+    videos_test = read_videos(tmp_path / "test_centered_pair_2vids.slp")
+    compare_videos(videos, videos_test)
 
 
 def test_write_tracks(centered_pair, tmp_path):
@@ -178,3 +197,160 @@ def test_write_labels(centered_pair, slp_real_data, tmp_path):
         assert len(saved_labels.skeletons) == len(labels.skeletons) == 1
         assert saved_labels.skeleton.name == labels.skeleton.name
         assert saved_labels.skeleton.node_names == labels.skeleton.node_names
+        assert len(saved_labels.suggestions) == len(labels.suggestions)
+
+
+def test_load_multi_skeleton(tmpdir):
+    """Test loading multiple skeletons from a single file."""
+    skel1 = Skeleton()
+    skel1.add_node(Node("n1"))
+    skel1.add_node(Node("n2"))
+    skel1.add_edge("n1", "n2")
+    skel1.add_symmetry("n1", "n2")
+
+    skel2 = Skeleton()
+    skel2.add_node(Node("n3"))
+    skel2.add_node(Node("n4"))
+    skel2.add_edge("n3", "n4")
+    skel2.add_symmetry("n3", "n4")
+
+    skels = [skel1, skel2]
+    labels = Labels(skeletons=skels)
+    write_metadata(tmpdir / "test.slp", labels)
+
+    loaded_skels = read_skeletons(tmpdir / "test.slp")
+    assert len(loaded_skels) == 2
+    assert loaded_skels[0].node_names == ["n1", "n2"]
+    assert loaded_skels[1].node_names == ["n3", "n4"]
+    assert loaded_skels[0].edge_inds == [(0, 1)]
+    assert loaded_skels[1].edge_inds == [(0, 1)]
+    assert loaded_skels[0].flipped_node_inds == [1, 0]
+    assert loaded_skels[1].flipped_node_inds == [1, 0]
+
+
+def test_slp_imgvideo(tmpdir, slp_imgvideo):
+    labels = read_labels(slp_imgvideo)
+    assert type(labels.video.backend) == ImageVideo
+    assert labels.video.shape == (3, 384, 384, 1)
+
+    write_labels(tmpdir / "test.slp", labels)
+    labels = read_labels(tmpdir / "test.slp")
+    assert type(labels.video.backend) == ImageVideo
+    assert labels.video.shape == (3, 384, 384, 1)
+
+    videos = [Video.from_filename(["fake1.jpg", "fake2.jpg"])]
+    assert videos[0].shape is None
+    assert len(videos[0].filename) == 2
+    write_videos(tmpdir / "test2.slp", videos)
+    videos = read_videos(tmpdir / "test2.slp")
+    assert type(videos[0].backend) == ImageVideo
+    assert len(videos[0].filename) == 2
+    assert videos[0].shape is None
+
+
+def test_suggestions(tmpdir):
+    labels = Labels()
+    labels.videos.append(Video.from_filename("fake.mp4"))
+    labels.suggestions.append(SuggestionFrame(video=labels.video, frame_idx=0))
+
+    write_suggestions(tmpdir / "test.slp", labels.suggestions, labels.videos)
+    loaded_suggestions = read_suggestions(tmpdir / "test.slp", labels.videos)
+    assert len(loaded_suggestions) == 1
+    assert loaded_suggestions[0].video.filename == "fake.mp4"
+    assert loaded_suggestions[0].frame_idx == 0
+
+    # Handle missing suggestions dataset
+    write_videos(tmpdir / "test2.slp", labels.videos)
+    loaded_suggestions = read_suggestions(tmpdir / "test2.slp", labels.videos)
+    assert len(loaded_suggestions) == 0
+
+
+def test_pkg_roundtrip(tmpdir, slp_minimal_pkg):
+    labels = read_labels(slp_minimal_pkg)
+    assert type(labels.video.backend) == HDF5Video
+    assert labels.video.shape == (1, 384, 384, 1)
+    assert labels.video.backend.embedded_frame_inds == [0]
+    assert labels.video.filename == slp_minimal_pkg
+
+    write_labels(str(tmpdir / "roundtrip.pkg.slp"), labels)
+    labels = read_labels(str(tmpdir / "roundtrip.pkg.slp"))
+    assert type(labels.video.backend) == HDF5Video
+    assert labels.video.shape == (1, 384, 384, 1)
+    assert labels.video.backend.embedded_frame_inds == [0]
+    assert (
+        Path(labels.video.filename).as_posix()
+        == Path(tmpdir / "roundtrip.pkg.slp").as_posix()
+    )
+
+
+@pytest.mark.parametrize(
+    "to_embed", [True, "all", "user", "suggestions", "user+suggestions"]
+)
+def test_embed(tmpdir, slp_real_data, to_embed):
+    base_labels = read_labels(slp_real_data)
+    assert type(base_labels.video.backend) == MediaVideo
+    assert (
+        Path(base_labels.video.filename).as_posix()
+        == "tests/data/videos/centered_pair_low_quality.mp4"
+    )
+    assert base_labels.video.shape == (1100, 384, 384, 1)
+    assert len(base_labels) == 10
+    assert len(base_labels.suggestions) == 10
+    assert len(base_labels.user_labeled_frames) == 5
+
+    labels_path = Path(tmpdir / "labels.pkg.slp").as_posix()
+    write_labels(labels_path, base_labels, embed=to_embed)
+    labels = read_labels(labels_path)
+    assert len(labels) == 10
+    assert type(labels.video.backend) == HDF5Video
+    assert Path(labels.video.filename).as_posix() == labels_path
+    assert (
+        Path(labels.video.source_video.filename).as_posix()
+        == "tests/data/videos/centered_pair_low_quality.mp4"
+    )
+    if to_embed == "all" or to_embed is True:
+        assert labels.video.backend.embedded_frame_inds == [
+            0,
+            110,
+            220,
+            330,
+            440,
+            550,
+            660,
+            770,
+            880,
+            990,
+        ]
+    elif to_embed == "user":
+        assert labels.video.backend.embedded_frame_inds == [0, 220, 440, 770, 990]
+    elif to_embed == "suggestions":
+        assert len(labels.video.backend.embedded_frame_inds) == 10
+    elif to_embed == "suggestions+user":
+        assert len(labels.video.backend.embedded_frame_inds) == 10
+
+
+def test_embed_two_rounds(tmpdir, slp_real_data):
+    base_labels = read_labels(slp_real_data)
+    labels_path = str(tmpdir / "labels.pkg.slp")
+    write_labels(labels_path, base_labels, embed="user")
+    labels = read_labels(labels_path)
+
+    assert labels.video.backend.embedded_frame_inds == [0, 220, 440, 770, 990]
+
+    labels2_path = str(tmpdir / "labels2.pkg.slp")
+    write_labels(labels2_path, labels)
+    labels2 = read_labels(labels2_path)
+    assert (
+        Path(labels2.video.source_video.filename).as_posix()
+        == "tests/data/videos/centered_pair_low_quality.mp4"
+    )
+    assert labels2.video.backend.embedded_frame_inds == [0, 220, 440, 770, 990]
+
+    labels3_path = str(tmpdir / "labels3.slp")
+    write_labels(labels3_path, labels, embed="source")
+    labels3 = read_labels(labels3_path)
+    assert (
+        Path(labels3.video.filename).as_posix()
+        == "tests/data/videos/centered_pair_low_quality.mp4"
+    )
+    assert type(labels3.video.backend) == MediaVideo

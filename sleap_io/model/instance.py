@@ -41,7 +41,7 @@ class Point:
     visible: bool = True
     complete: bool = False
 
-    def __eq__(self, other: object):
+    def __eq__(self, other: object) -> bool:
         """Compare `self` and `other` for equality.
 
         Precision error between the respective `x` and `y` properties of two
@@ -54,8 +54,8 @@ class Point:
             other: Instance of `Point` to compare to.
 
         Returns:
-            True if all attributes of `self` and `other` are the identical (possibly
-            allowing precision error for `x` and `y` attributes).
+            Returns True if all attributes of `self` and `other` are the identical
+                (possibly allowing precision error for `x` and `y` attributes).
         """
         # Check that other is a Point.
         if type(other) is not type(self):
@@ -108,17 +108,17 @@ class PredictedPoint(Point):
             else np.full((3,), np.nan)
         )
 
-    def __eq__(self, other: object):
+    def __eq__(self, other: object) -> bool:
         """Compare `self` and `other` for equality.
 
         See `Point.__eq__()` for important notes about point equality semantics!
 
         Args:
-            self, other: instance of `PredictedPoint` to compare
+            other: Instance of `PredictedPoint` to compare
 
         Returns:
-            True if all attributes of `self` and `other` are the identical (possibly
-            allowing precision error for `x` and `y` attributes).
+            Returns True if all attributes of `self` and `other` are the identical
+                (possibly allowing precision error for `x` and `y` attributes).
         """
         if not super().__eq__(other):
             return False
@@ -226,9 +226,11 @@ class Instance:
                 for node in points.keys()
             ]
             vals = [
-                point
-                if type(point) == self._POINT_TYPE
-                else self._make_default_point(*point)
+                (
+                    point
+                    if type(point) == self._POINT_TYPE
+                    else self._make_default_point(*point)
+                )
                 for point in points.values()
             ]
             points = {k: v for k, v in zip(keys, vals)}
@@ -262,6 +264,13 @@ class Instance:
     def __len__(self) -> int:
         """Return the number of points in the instance."""
         return len(self.points)
+
+    def __repr__(self) -> str:
+        """Return a readable representation of the instance."""
+        pts = self.numpy().tolist()
+        track = f'"{self.track.name}"' if self.track is not None else self.track
+
+        return f"Instance(points={pts}, track={track})"
 
     @property
     def n_visible(self) -> int:
@@ -304,7 +313,7 @@ class Instance:
 class PredictedInstance(Instance):
     """A `PredictedInstance` is an `Instance` that was predicted using a model.
 
-    Args:
+    Attributes:
         skeleton: The `Skeleton` that this `Instance` is associated with.
         points: A dictionary where keys are `Skeleton` nodes and values are `Point`s.
         track: An optional `Track` associated with a unique animal/object across frames
@@ -324,6 +333,22 @@ class PredictedInstance(Instance):
     )
     score: float = 0.0
     tracking_score: Optional[float] = 0
+
+    def __repr__(self) -> str:
+        """Return a readable representation of the instance."""
+        pts = self.numpy().tolist()
+        track = f'"{self.track.name}"' if self.track is not None else self.track
+
+        score = str(self.score) if self.score is None else f"{self.score:.2f}"
+        tracking_score = (
+            str(self.tracking_score)
+            if self.tracking_score is None
+            else f"{self.tracking_score:.2f}"
+        )
+        return (
+            f"PredictedInstance(points={pts}, track={track}, "
+            f"score={score}, tracking_score={tracking_score})"
+        )
 
     @classmethod
     def from_numpy(  # type: ignore[override]

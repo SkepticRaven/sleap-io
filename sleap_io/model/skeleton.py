@@ -166,6 +166,11 @@ class Skeleton:
         ]
 
     @property
+    def edge_names(self) -> list[str, str]:
+        """Edge names as a list of 2-tuples with string node names."""
+        return [(edge.source.name, edge.destination.name) for edge in self.edges]
+
+    @property
     def flipped_node_inds(self) -> list[int]:
         """Returns node indices that should be switched when horizontally flipping."""
         flip_idx = np.arange(len(self.nodes))
@@ -183,7 +188,12 @@ class Skeleton:
         """Return the number of nodes in the skeleton."""
         return len(self.nodes)
 
-    def index(self, node: Union[Node, str]) -> int:
+    def __repr__(self) -> str:
+        """Return a readable representation of the skeleton."""
+        nodes = ", ".join([f'"{node}"' for node in self.node_names])
+        return "Skeleton(" f"nodes=[{nodes}], " f"edges={self.edge_inds}" ")"
+
+    def index(self, node: Node | str) -> int:
         """Return the index of a node specified as a `Node` or string name."""
         if type(node) == str:
             return self.index(self._node_name_map[node])
@@ -192,7 +202,7 @@ class Skeleton:
         else:
             raise IndexError(f"Invalid indexing argument for skeleton: {node}")
 
-    def __getitem__(self, idx: Union[int, str]) -> Node:
+    def __getitem__(self, idx: int | str) -> Node:
         """Return a `Node` when indexing by name or integer."""
         if type(idx) == int:
             return self.nodes[idx]
@@ -200,3 +210,85 @@ class Skeleton:
             return self._node_name_map[idx]
         else:
             raise IndexError(f"Invalid indexing argument for skeleton: {idx}")
+
+    def add_node(self, node: Node | str):
+        """Add a `Node` to the skeleton.
+
+        Args:
+            node: A `Node` object or a string name to create a new node.
+        """
+        if type(node) == str:
+            node = Node(node)
+        if node not in self.nodes:
+            self.nodes.append(node)
+            self._update_node_map(None, self.nodes)
+
+    def add_edge(self, src: Edge | Node | str = None, dst: Node | str = None):
+        """Add an `Edge` to the skeleton.
+
+        Args:
+            src: The source `Node` or name of the source node.
+            dst: The destination `Node` or name of the destination node.
+        """
+        if type(src) == Edge:
+            edge = src
+            if edge not in self.edges:
+                self.edges.append(edge)
+            if edge.source not in self.nodes:
+                self.add_node(edge.source)
+            if edge.destination not in self.nodes:
+                self.add_node(edge.destination)
+            return
+
+        if type(src) == str or type(src) == Node:
+            try:
+                src = self.index(src)
+            except KeyError:
+                self.add_node(src)
+                src = self.index(src)
+
+        if type(dst) == str or type(dst) == Node:
+            try:
+                dst = self.index(dst)
+            except KeyError:
+                self.add_node(dst)
+                dst = self.index(dst)
+
+        edge = Edge(self.nodes[src], self.nodes[dst])
+        if edge not in self.edges:
+            self.edges.append(edge)
+
+    def add_symmetry(
+        self, node1: Symmetry | Node | str = None, node2: Node | str = None
+    ):
+        """Add a symmetry relationship to the skeleton.
+
+        Args:
+            node1: The first `Node` or name of the first node.
+            node2: The second `Node` or name of the second node.
+        """
+        if type(node1) == Symmetry:
+            if node1 not in self.symmetries:
+                self.symmetries.append(node1)
+                for node in node1.nodes:
+                    if node not in self.nodes:
+                        self.add_node(node)
+            return
+
+        if type(node1) == str or type(node1) == Node:
+            try:
+                node1 = self.index(node1)
+            except KeyError:
+                self.add_node(node1)
+                node1 = self.index(node1)
+
+        if type(node2) == str or type(node2) == Node:
+            try:
+                node2 = self.index(node2)
+            except KeyError:
+                self.add_node(node2)
+                node2 = self.index(node2)
+
+        symmetry = Symmetry({self.nodes[node1], self.nodes[node2]})
+        if symmetry not in self.symmetries:
+            self.symmetries.append(symmetry)

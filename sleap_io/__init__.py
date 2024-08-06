@@ -1,9 +1,6 @@
 """This module exposes all high level APIs for sleap-io."""
 
-# Define package version.
-# This is read dynamically by setuptools in pyproject.toml to determine the release version.
-__version__ = "0.0.11"
-
+from sleap_io.version import __version__
 from sleap_io.model.skeleton import Node, Edge, Skeleton, Symmetry
 from sleap_io.model.video import Video
 from sleap_io.model.instance import (
@@ -13,6 +10,7 @@ from sleap_io.model.instance import (
     Instance,
     PredictedInstance,
 )
+from sleap_io.model.suggestions import SuggestionFrame
 from sleap_io.model.labeled_frame import LabeledFrame
 from sleap_io.model.labels import Labels
 from sleap_io.io.main import (
@@ -24,4 +22,7 @@ from sleap_io.io.main import (
     save_labelstudio,
     load_jabs,
     save_jabs,
+    load_video,
+    load_file,
+    save_file,
 )

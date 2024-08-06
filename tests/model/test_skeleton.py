@@ -1,4 +1,5 @@
 """Tests for methods in the sleap_io.model.skeleton file."""
+
 import pytest
 from sleap_io.model.skeleton import Node, Edge, Symmetry, Skeleton
 
@@ -38,6 +39,8 @@ def test_skeleton():
     assert skel.edges[0].destination == skel.nodes[1]
     assert skel.edges[0] == Edge(skel.nodes[0], skel.nodes[1])
     assert skel.edge_inds == [(0, 1)]
+
+    assert str(skel) == 'Skeleton(nodes=["A", "B"], edges=[(0, 1)])'
 
     with pytest.raises(IndexError):
         skel[None]
@@ -97,3 +100,66 @@ def test_edge_unpack():
     src, dst = skel.edges[0]
     assert src.name == "A"
     assert dst.name == "B"
+
+
+def test_add_node():
+    skel = Skeleton()
+    skel.add_node("A")
+    assert skel.node_names == ["A"]
+
+    skel.add_node(Node("B"))
+    assert skel.node_names == ["A", "B"]
+
+    skel.add_node("C")
+    assert skel.node_names == ["A", "B", "C"]
+
+    skel.add_node("B")
+    assert skel.node_names == ["A", "B", "C"]
+
+
+def test_add_edge():
+    skel = Skeleton(["A", "B"])
+    skel.add_edge("A", "B")
+    assert skel.edge_inds == [(0, 1)]
+    assert skel.edge_names == [("A", "B")]
+
+    skel.add_edge("B", "A")
+    assert skel.edge_inds == [(0, 1), (1, 0)]
+
+    skel.add_edge("A", "B")
+    assert skel.edge_inds == [(0, 1), (1, 0)]
+
+    skel.add_edge("A", "C")
+    assert skel.edge_inds == [(0, 1), (1, 0), (0, 2)]
+
+    skel.add_edge("D", "A")
+    assert skel.edge_inds == [(0, 1), (1, 0), (0, 2), (3, 0)]
+
+    skel = Skeleton(["A", "B"])
+    skel.add_edge(Edge(Node("A"), Node("B")))
+    assert skel.edge_inds == [(0, 1)]
+
+    skel.add_edge(Edge(Node("C"), Node("D")))
+    assert skel.edge_inds == [(0, 1), (2, 3)]
+
+
+def test_add_symmetry():
+    skel = Skeleton(["A", "B"])
+    skel.add_symmetry("A", "B")
+    assert skel.symmetries == [Symmetry([Node("A"), Node("B")])]
+
+    skel.add_symmetry("B", "A")
+    assert skel.symmetries == [Symmetry([Node("A"), Node("B")])]
+
+    skel.add_symmetry(Symmetry([Node("C"), Node("D")]))
+    assert skel.symmetries == [
+        Symmetry([Node("A"), Node("B")]),
+        Symmetry([Node("C"), Node("D")]),
+    ]
+
+    skel.add_symmetry("E", "F")
+    assert skel.symmetries == [
+        Symmetry([Node("A"), Node("B")]),
+        Symmetry([Node("C"), Node("D")]),
+        Symmetry([Node("E"), Node("F")]),
+    ]

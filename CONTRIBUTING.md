@@ -93,6 +93,15 @@ We check for coverage by parsing the outputs from `pytest` and uploading to [Cod
 
 All changes should aim to increase or maintain test coverage.
 
+### Live coverage
+
+*The following steps are based on [this guide](https://jasonstitt.com/perfect-python-live-test-coverage).*
+
+1. If you already have an environment installed, `pip install -e ."[dev]"` to make sure you have the latest dev tools (namely `pytest-watch`).
+2. Install the [Coverage Gutters extension](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) in VS Code.
+3. Open a terminal, `conda activate sleap-io` and then run `ptw` to automatically run tests. This will generate a new `lcov.info` file when it's done.
+4. Enable the coverage gutters by using **Ctrl/Cmd**+**Shift**+**P**, then **Coverage Gutters: Display Coverage**.
+
 
 ### Code style
 To standardize formatting conventions, we use [`black`](https://black.readthedocs.io/en/stable/).
@@ -138,15 +147,7 @@ def load_tracks(filepath: str) -> np.ndarray:
 - Use backticks (`) when possible to enable auto-linking for documentation.
 - Always document shapes and data types when describing inputs/outputs that are arrays.
 
-Adherence to the docstring conventions is automatically checked on push (see [`.github/workflows/lint.yml`](.github/workflows/lint.yml)).
-
-
-### Static type checking
-All types must be statically defined and will be checked using [`mypy`](https://mypy.readthedocs.io/).
-
-See [PEP 484](https://peps.python.org/pep-0484/) for reference.
-
-Adherence to typing requirements is automatically checked on push (see [`.github/workflows/lint.yml`](.github/workflows/lint.yml)).
+Adherence to the docstring conventions is automatically checked on push (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 
 ## Releases
@@ -165,19 +166,21 @@ Valid examples:
 ```
 
 ### Build
-The PyPI-compatible package settings are in [setup.cfg].
+The PyPI-compatible package settings are in [`pyproject.toml`](pyproject.toml).
 
-The version number is set in [sleap_io/__init__.py] in the `__version__` variable. This is read automatically by setuptools during installation and build.
+The version number is set in [`sleap_io/version.py`](sleap_io/version.py) in the `__version__` variable. This is read automatically by setuptools during installation and build.
 
 To manually build (e.g., locally):
 ```
 python -m build --wheel
 ```
 
-To trigger an automated build (via the [.github/workflows/build.yml] action), [publish a Release](https://github.com/talmolab/sleap-io/releases/new).
+To trigger an automated build (via the [`.github/workflows/build.yml`](.github/workflows/build.yml) action), [publish a Release](https://github.com/talmolab/sleap-io/releases/new).
 
 
 ## Documentation website
-**TODO:**
-- [ ] Setup sphinx/autodoc.
-- [ ] Describe documentation best practices.
+
+1. Install `sleap-io` with the `dev` dependencies (e.g., `pip install -e ".[dev]"`). This is the default when installing from source via conda (`conda env create -f environment.yml`).
+2. Build and tag a new version of the docs: `mike deploy --update-aliases 0.1.4 latest`
+3. Preview live changes locally with: `mike serve`
+4. Manually push a specific version with: `mike deploy --push --update-aliases --allow-empty 0.1.4 latest`

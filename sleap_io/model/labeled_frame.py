@@ -11,14 +11,19 @@ from typing import Union
 import numpy as np
 
 
-@define(auto_attribs=True)
+@define(eq=False)
 class LabeledFrame:
     """Labeled data for a single frame of a video.
 
-    Args:
-        video: The :class:`Video` associated with this `LabeledFrame`.
+    Attributes:
+        video: The `Video` associated with this `LabeledFrame`.
         frame_idx: The index of the `LabeledFrame` in the `Video`.
         instances: List of `Instance` objects associated with this `LabeledFrame`.
+
+    Notes:
+        Instances of this class are hashed by identity, not by value. This means that
+        two `LabeledFrame` instances with the same attributes will NOT be considered
+        equal in a set or dict.
     """
 
     video: Video
@@ -43,9 +48,25 @@ class LabeledFrame:
         return [inst for inst in self.instances if type(inst) == Instance]
 
     @property
+    def has_user_instances(self) -> bool:
+        """Return True if the frame has any user-labeled instances."""
+        for inst in self.instances:
+            if type(inst) == Instance:
+                return True
+        return False
+
+    @property
     def predicted_instances(self) -> list[Instance]:
         """Frame instances that are predicted by a model (`PredictedInstance` objects)."""
         return [inst for inst in self.instances if type(inst) == PredictedInstance]
+
+    @property
+    def has_predicted_instances(self) -> bool:
+        """Return True if the frame has any predicted instances."""
+        for inst in self.instances:
+            if type(inst) == PredictedInstance:
+                return True
+        return False
 
     def numpy(self) -> np.ndarray:
         """Return all instances in the frame as a numpy array.
@@ -104,3 +125,11 @@ class LabeledFrame:
             ]
 
         return unused_predictions
+
+    def remove_predictions(self):
+        """Remove all `PredictedInstance` objects from the frame."""
+        self.instances = [inst for inst in self.instances if type(inst) == Instance]
+
+    def remove_empty_instances(self):
+        """Remove all instances with no visible points."""
+        self.instances = [inst for inst in self.instances if not inst.is_empty]
