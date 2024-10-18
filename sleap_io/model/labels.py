@@ -473,6 +473,13 @@ class Labels:
             video_map: Alternative input of dictionary where keys are the old videos and
                 values are the new videos.
         """
+        if (
+            old_videos is None
+            and new_videos is not None
+            and len(new_videos) == len(self.videos)
+        ):
+            old_videos = self.videos
+
         if video_map is None:
             video_map = {o: n for o, n in zip(old_videos, new_videos)}
 
@@ -485,6 +492,9 @@ class Labels:
         for sf in self.suggestions:
             if sf.video in video_map:
                 sf.video = video_map[sf.video]
+
+        # Update the list of videos.
+        self.videos = [video_map.get(video, video) for video in self.videos]
 
     def replace_filenames(
         self,
@@ -622,6 +632,7 @@ class Labels:
         n_test: int | float | None = None,
         save_dir: str | Path | None = None,
         seed: int | None = None,
+        embed: bool = True,
     ) -> tuple[Labels, Labels] | tuple[Labels, Labels, Labels]:
         """Make splits for training with embedded images.
 
@@ -635,6 +646,10 @@ class Labels:
                 test split will not be saved.
             save_dir: If specified, save splits to SLP files with embedded images.
             seed: Optional integer seed to use for reproducibility.
+            embed: If `True` (the default), embed user labeled frame images in the saved
+                files, which is useful for portability but can be slow for large
+                projects. If `False`, labels are saved with references to the source
+                videos files.
 
         Returns:
             A tuple of `labels_train, labels_val` or
@@ -652,6 +667,12 @@ class Labels:
             - `{save_dir}/val.pkg.slp`
             - `{save_dir}/test.pkg.slp` (if `n_test` is specified)
 
+            If `embed` is `False`, the files will be saved without embedded images to:
+
+            - `{save_dir}/train.slp`
+            - `{save_dir}/val.slp`
+            - `{save_dir}/test.slp` (if `n_test` is specified)
+
         See also: `Labels.split`
         """
         # Clean up labels.
@@ -660,16 +681,23 @@ class Labels:
         labels.suggestions = []
         labels.clean()
 
-        # Make splits.
+        # Make train split.
         labels_train, labels_rest = labels.split(n_train, seed=seed)
+
+        # Make test split.
         if n_test is not None:
             if n_test < 1:
                 n_test = (n_test * len(labels)) / len(labels_rest)
             labels_test, labels_rest = labels_rest.split(n=n_test, seed=seed)
+
+        # Make val split.
         if n_val is not None:
             if n_val < 1:
                 n_val = (n_val * len(labels)) / len(labels_rest)
-            labels_val, _ = labels_rest.split(n=n_val, seed=seed)
+            if isinstance(n_val, float) and n_val == 1.0:
+                labels_val = labels_rest
+            else:
+                labels_val, _ = labels_rest.split(n=n_val, seed=seed)
         else:
             labels_val = labels_rest
 
@@ -678,9 +706,14 @@ class Labels:
             save_dir = Path(save_dir)
             save_dir.mkdir(exist_ok=True, parents=True)
 
-            labels_train.save(save_dir / "train.pkg.slp", embed="user")
-            labels_val.save(save_dir / "val.pkg.slp", embed="user")
-            labels_test.save(save_dir / "test.pkg.slp", embed="user")
+            if embed:
+                labels_train.save(save_dir / "train.pkg.slp", embed="user")
+                labels_val.save(save_dir / "val.pkg.slp", embed="user")
+                labels_test.save(save_dir / "test.pkg.slp", embed="user")
+            else:
+                labels_train.save(save_dir / "train.slp", embed=False)
+                labels_val.save(save_dir / "val.slp", embed=False)
+                labels_test.save(save_dir / "test.slp", embed=False)
 
         if n_test is None:
             return labels_train, labels_val

@@ -356,15 +356,15 @@ def test_labels_remove_predictions(slp_real_data):
 def test_replace_videos(slp_real_data):
     labels = load_slp(slp_real_data)
     assert labels.video.filename == "tests/data/videos/centered_pair_low_quality.mp4"
-    labels.replace_videos(
-        old_videos=[labels.video], new_videos=[Video.from_filename("fake.mp4")]
-    )
+    labels.replace_videos(new_videos=[Video.from_filename("fake.mp4")])
 
     for lf in labels:
         assert lf.video.filename == "fake.mp4"
 
     for sf in labels.suggestions:
         assert sf.video.filename == "fake.mp4"
+
+    assert labels.video.filename == "fake.mp4"
 
 
 def test_replace_filenames():
@@ -537,7 +537,7 @@ def test_split(slp_real_data, tmp_path):
     )
 
 
-def test_make_training_splits(slp_real_data, tmp_path):
+def test_make_training_splits(slp_real_data):
     labels = load_slp(slp_real_data)
     assert len(labels.user_labeled_frames) == 5
 
@@ -568,6 +568,11 @@ def test_make_training_splits(slp_real_data, tmp_path):
     assert len(val) == 1
     assert len(test) == 1
 
+    train, val, test = labels.make_training_splits(n_train=0.4, n_val=0.4, n_test=0.2)
+    assert len(train) == 2
+    assert len(val) == 2
+    assert len(test) == 1
+
 
 def test_make_training_splits_save(slp_real_data, tmp_path):
     labels = load_slp(slp_real_data)
@@ -587,3 +592,43 @@ def test_make_training_splits_save(slp_real_data, tmp_path):
     assert train_.provenance["source_labels"] == slp_real_data
     assert val_.provenance["source_labels"] == slp_real_data
     assert test_.provenance["source_labels"] == slp_real_data
+
+
+@pytest.mark.parametrize("embed", [True, False])
+def test_make_training_splits_save(slp_real_data, tmp_path, embed):
+    labels = load_slp(slp_real_data)
+
+    train, val, test = labels.make_training_splits(
+        0.6, 0.2, 0.2, save_dir=tmp_path, embed=embed
+    )
+
+    if embed:
+        train_, val_, test_ = (
+            load_slp(tmp_path / "train.pkg.slp"),
+            load_slp(tmp_path / "val.pkg.slp"),
+            load_slp(tmp_path / "test.pkg.slp"),
+        )
+    else:
+        train_, val_, test_ = (
+            load_slp(tmp_path / "train.slp"),
+            load_slp(tmp_path / "val.slp"),
+            load_slp(tmp_path / "test.slp"),
+        )
+
+    assert len(train_) == len(train)
+    assert len(val_) == len(val)
+    assert len(test_) == len(test)
+
+    if embed:
+        assert train_.provenance["source_labels"] == slp_real_data
+        assert val_.provenance["source_labels"] == slp_real_data
+        assert test_.provenance["source_labels"] == slp_real_data
+    else:
+        assert train_.video.filename == labels.video.filename
+        assert val_.video.filename == labels.video.filename
+        assert test_.video.filename == labels.video.filename
+
+    if embed:
+        for labels_ in [train_, val_, test_]:
+            for lf in labels_:
+                assert lf.image.shape == (384, 384, 1)

@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 from sleap_io import Labels, Skeleton, Video
-from sleap_io.io import slp, nwb, labelstudio, jabs
+from sleap_io.io import slp, nwb, labelstudio, jabs, video_writing
 from typing import Optional, Union
 from pathlib import Path
+import numpy as np
 
 
-def load_slp(filename: str) -> Labels:
+def load_slp(filename: str, open_videos: bool = True) -> Labels:
     """Load a SLEAP dataset.
 
     Args:
         filename: Path to a SLEAP labels file (`.slp`).
+        open_videos: If `True` (the default), attempt to open the video backend for
+            I/O. If `False`, the backend will not be opened (useful for reading metadata
+            when the video files are not available).
 
     Returns:
         The dataset as a `Labels` object.
     """
-    return slp.read_labels(filename)
+    return slp.read_labels(filename, open_videos=open_videos)
 
 
 def save_slp(
@@ -149,6 +153,33 @@ def load_video(filename: str, **kwargs) -> Video:
     return Video.from_filename(filename, **kwargs)
 
 
+def save_video(frames: np.ndarray | Video, filename: str | Path, **kwargs):
+    """Write a list of frames to a video file.
+
+    Args:
+        frames: Sequence of frames to write to video. Each frame should be a 2D or 3D
+            numpy array with dimensions (height, width) or (height, width, channels).
+        filename: Path to output video file.
+        fps: Frames per second. Defaults to 30.
+        pixelformat: Pixel format for video. Defaults to "yuv420p".
+        codec: Codec to use for encoding. Defaults to "libx264".
+        crf: Constant rate factor to control lossiness of video. Values go from 2 to 32,
+            with numbers in the 18 to 30 range being most common. Lower values mean less
+            compressed/higher quality. Defaults to 25. No effect if codec is not
+            "libx264".
+        preset: H264 encoding preset. Defaults to "superfast". No effect if codec is not
+            "libx264".
+        output_params: Additional output parameters for FFMPEG. This should be a list of
+            strings corresponding to command line arguments for FFMPEG and libx264. Use
+            `ffmpeg -h encoder=libx264` to see all options for libx264 output_params.
+
+    See also: `sio.VideoWriter`
+    """
+    with video_writing.VideoWriter(filename, **kwargs) as writer:
+        for frame in frames:
+            writer(frame)
+
+
 def load_file(
     filename: str | Path, format: Optional[str] = None, **kwargs
 ) -> Union[Labels, Video]:
@@ -228,6 +259,7 @@ def save_file(
         save_labelstudio(labels, filename, **kwargs)
     elif format == "jabs":
         pose_version = kwargs.pop("pose_version", 5)
-        save_jabs(labels, pose_version, filename, **kwargs)
+        root_folder = kwargs.pop("root_folder", filename)
+        save_jabs(labels, pose_version=pose_version, root_folder=root_folder)
     else:
         raise ValueError(f"Unknown format '{format}' for filename: '{filename}'.")

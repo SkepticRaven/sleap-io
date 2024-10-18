@@ -20,11 +20,8 @@ from sleap_io import (
     LabeledFrame,
     Labels,
 )
-from sleap_io.io.video import VideoBackend, ImageVideo, MediaVideo, HDF5Video
-from sleap_io.io.utils import (
-    read_hdf5_attrs,
-    read_hdf5_dataset,
-)
+from sleap_io.io.video_reading import VideoBackend, ImageVideo, MediaVideo, HDF5Video
+from sleap_io.io.utils import read_hdf5_attrs, read_hdf5_dataset, is_file_accessible
 from enum import IntEnum
 from pathlib import Path
 import imageio.v3 as iio
@@ -43,16 +40,36 @@ class InstanceType(IntEnum):
     PREDICTED = 1
 
 
+def sanitize_filename(
+    filename: str | Path | list[str] | list[Path],
+) -> str | list[str]:
+    """Sanitize a filename to a canonical posix-compatible format.
+
+    Args:
+        filename: A string or `Path` object or list of either to sanitize.
+
+    Returns:
+        A sanitized filename as a string (or list of strings if a list was provided)
+        with forward slashes and posix-formatted.
+    """
+    if isinstance(filename, list):
+        return [sanitize_filename(f) for f in filename]
+    return Path(filename).as_posix().replace("\\", "/")
+
+
 def make_video(
-    labels_path: str, video_json: dict, video_ind: int | None = None
+    labels_path: str,
+    video_json: dict,
+    open_backend: bool = True,
 ) -> Video:
     """Create a `Video` object from a JSON dictionary.
 
     Args:
         labels_path: A string path to the SLEAP labels file.
         video_json: A dictionary containing the video metadata.
-        video_ind: The index of the video in the labels file. This is used to try to
-            recover the source video for embedded videos. This is skipped if `None`.
+        open_backend: If `True` (the default), attempt to open the video backend for
+            I/O. If `False`, the backend will not be opened (useful for reading metadata
+            when the video files are not available).
     """
     backend_metadata = video_json["backend"]
     video_path = backend_metadata["filename"]
@@ -65,73 +82,89 @@ def make_video(
         is_embedded = True
 
     # Basic path resolution.
-    video_path = Path(Path(video_path).as_posix().replace("\\", "/"))
-
-    try:
-        if not video_path.exists():
-            # Check for the same filename in the same directory as the labels file.
-            video_path_ = Path(labels_path).parent / video_path.name
-            if video_path_.exists():
-                video_path = video_path_
-            else:
-                # TODO (TP): Expand capabilities of path resolution to support more
-                # complex path finding strategies.
-                pass
-    except OSError:
-        pass
-
-    # Convert video path to string.
-    video_path = video_path.as_posix()
+    video_path = Path(sanitize_filename(video_path))
 
     if is_embedded:
         # Try to recover the source video.
         with h5py.File(labels_path, "r") as f:
-            if f"video{video_ind}" in f:
+            dataset = backend_metadata["dataset"]
+            if dataset.endswith("/video"):
+                dataset = dataset[:-6]
+            if dataset in f:
                 source_video_json = json.loads(
-                    f[f"video{video_ind}/source_video"].attrs["json"]
+                    f[f"{dataset}/source_video"].attrs["json"]
                 )
                 source_video = make_video(
-                    labels_path, source_video_json, video_ind=None
+                    labels_path,
+                    source_video_json,
+                    open_backend=open_backend,
                 )
 
-    if "filenames" in backend_metadata:
-        # This is an ImageVideo.
-        # TODO: Path resolution.
-        video_path = backend_metadata["filenames"]
+    backend = None
+    if open_backend:
+        try:
+            if not is_file_accessible(video_path):
+                # Check for the same filename in the same directory as the labels file.
+                candidate_video_path = Path(labels_path).parent / video_path.name
+                if is_file_accessible(candidate_video_path):
+                    video_path = candidate_video_path
+                else:
+                    # TODO (TP): Expand capabilities of path resolution to support more
+                    # complex path finding strategies.
+                    pass
+        except (OSError, PermissionError, FileNotFoundError):
+            pass
 
-    try:
-        backend = VideoBackend.from_filename(
-            video_path,
-            dataset=backend_metadata.get("dataset", None),
-            grayscale=backend_metadata.get("grayscale", None),
-            input_format=backend_metadata.get("input_format", None),
-        )
-    except ValueError:
-        backend = None
+        # Convert video path to string.
+        video_path = video_path.as_posix()
+
+        if "filenames" in backend_metadata:
+            # This is an ImageVideo.
+            # TODO: Path resolution.
+            video_path = backend_metadata["filenames"]
+            video_path = [Path(sanitize_filename(p)) for p in video_path]
+
+        try:
+            grayscale = None
+            if "grayscale" in backend_metadata:
+                grayscale = backend_metadata["grayscale"]
+            elif "shape" in backend_metadata:
+                grayscale = backend_metadata["shape"][-1] == 1
+            backend = VideoBackend.from_filename(
+                video_path,
+                dataset=backend_metadata.get("dataset", None),
+                grayscale=grayscale,
+                input_format=backend_metadata.get("input_format", None),
+            )
+        except Exception:
+            backend = None
 
     return Video(
         filename=video_path,
         backend=backend,
         backend_metadata=backend_metadata,
         source_video=source_video,
+        open_backend=open_backend,
     )
 
 
-def read_videos(labels_path: str) -> list[Video]:
+def read_videos(labels_path: str, open_backend: bool = True) -> list[Video]:
     """Read `Video` dataset in a SLEAP labels file.
 
     Args:
         labels_path: A string path to the SLEAP labels file.
+        open_backend: If `True` (the default), attempt to open the video backend for
+            I/O. If `False`, the backend will not be opened (useful for reading metadata
+            when the video files are not available).
 
     Returns:
         A list of `Video` objects.
     """
     videos = []
-    for video_ind, video_data in enumerate(
-        read_hdf5_dataset(labels_path, "videos_json")
-    ):
+    videos_metadata = read_hdf5_dataset(labels_path, "videos_json")
+    for video_data in videos_metadata:
         video_json = json.loads(video_data)
-        video = make_video(labels_path, video_json, video_ind=video_ind)
+        video = make_video(labels_path, video_json, open_backend=open_backend)
         videos.append(video)
     return videos
 
@@ -145,16 +178,17 @@ def video_to_dict(video: Video) -> dict:
     Returns:
         A dictionary containing the video metadata.
     """
+    video_filename = sanitize_filename(video.filename)
     if video.backend is None:
-        return {"filename": video.filename, "backend": video.backend_metadata}
+        return {"filename": video_filename, "backend": video.backend_metadata}
 
     if type(video.backend) == MediaVideo:
         return {
-            "filename": video.filename,
+            "filename": video_filename,
             "backend": {
                 "type": "MediaVideo",
                 "shape": video.shape,
-                "filename": video.filename,
+                "filename": video_filename,
                 "grayscale": video.grayscale,
                 "bgr": True,
                 "dataset": "",
@@ -164,28 +198,29 @@ def video_to_dict(video: Video) -> dict:
 
     elif type(video.backend) == HDF5Video:
         return {
-            "filename": video.filename,
+            "filename": video_filename,
             "backend": {
                 "type": "HDF5Video",
                 "shape": video.shape,
                 "filename": (
-                    "." if video.backend.has_embedded_images else video.filename
+                    "." if video.backend.has_embedded_images else video_filename
                 ),
                 "dataset": video.backend.dataset,
                 "input_format": video.backend.input_format,
                 "convert_range": False,
                 "has_embedded_images": video.backend.has_embedded_images,
+                "grayscale": video.grayscale,
             },
         }
 
     elif type(video.backend) == ImageVideo:
         return {
-            "filename": video.filename,
+            "filename": video_filename,
             "backend": {
                 "type": "ImageVideo",
                 "shape": video.shape,
-                "filename": video.backend.filename[0],
-                "filenames": video.backend.filename,
+                "filename": sanitize_filename(video.backend.filename[0]),
+                "filenames": sanitize_filename(video.backend.filename),
                 "dataset": video.backend_metadata.get("dataset", None),
                 "grayscale": video.grayscale,
                 "input_format": video.backend_metadata.get("input_format", None),
@@ -235,10 +270,10 @@ def embed_video(
                     cv2.imencode("." + image_format, frame)[1]
                 ).astype("int8")
             else:
+                if frame.shape[-1] == 1:
+                    frame = frame.squeeze(axis=-1)
                 img_data = np.frombuffer(
-                    iio.imwrite(
-                        "<bytes>", frame.squeeze(axis=-1), extension="." + image_format
-                    ),
+                    iio.imwrite("<bytes>", frame, extension="." + image_format),
                     dtype="int8",
                 )
 
@@ -271,12 +306,13 @@ def embed_video(
 
         # Store metadata.
         ds.attrs["format"] = image_format
+        video_shape = video.shape
         (
             ds.attrs["frames"],
             ds.attrs["height"],
             ds.attrs["width"],
             ds.attrs["channels"],
-        ) = video.shape
+        ) = video_shape
 
         # Store frame indices.
         f.create_dataset(f"{group}/frame_numbers", data=frame_inds)
@@ -285,20 +321,20 @@ def embed_video(
         if video.source_video is not None:
             # If this is already an embedded dataset, retain the previous source video.
             source_video = video.source_video
-            embedded_video = video
-            video.replace_filename(labels_path, open=False)
         else:
             source_video = video
-            embedded_video = Video(
-                filename=labels_path,
-                backend=VideoBackend.from_filename(
-                    labels_path,
-                    dataset=f"{group}/video",
-                    grayscale=video.grayscale,
-                    keep_open=False,
-                ),
-                source_video=source_video,
-            )
+
+        # Create a new video object with the embedded data.
+        embedded_video = Video(
+            filename=labels_path,
+            backend=VideoBackend.from_filename(
+                labels_path,
+                dataset=f"{group}/video",
+                grayscale=video.grayscale,
+                keep_open=False,
+            ),
+            source_video=source_video,
+        )
 
         grp = f.require_group(f"{group}/source_video")
         grp.attrs["json"] = json.dumps(
@@ -334,7 +370,7 @@ def embed_frames(
         to_embed_by_video[video].append(frame_idx)
 
     for video in to_embed_by_video:
-        to_embed_by_video[video] = np.unique(to_embed_by_video[video])
+        to_embed_by_video[video] = np.unique(to_embed_by_video[video]).tolist()
 
     replaced_videos = {}
     for video, frame_inds in to_embed_by_video.items():
@@ -411,7 +447,6 @@ def write_videos(labels_path: str, videos: list[Video], restore_source: bool = F
     """
     video_jsons = []
     for video_ind, video in enumerate(videos):
-
         if type(video.backend) == HDF5Video and video.backend.has_embedded_images:
             if restore_source:
                 video = video.source_video
@@ -434,7 +469,7 @@ def write_videos(labels_path: str, videos: list[Video], restore_source: bool = F
 
         video_json = video_to_dict(video)
 
-        video_jsons.append(np.string_(json.dumps(video_json, separators=(",", ":"))))
+        video_jsons.append(np.bytes_(json.dumps(video_json, separators=(",", ":"))))
 
     with h5py.File(labels_path, "a") as f:
         f.create_dataset("videos_json", data=video_jsons, maxshape=(None,))
@@ -466,7 +501,7 @@ def write_tracks(labels_path: str, tracks: list[Track]):
     # TODO: Add support for track metadata like spawned on frame.
     SPAWNED_ON = 0
     tracks_json = [
-        np.string_(json.dumps([SPAWNED_ON, track.name], separators=(",", ":")))
+        np.bytes_(json.dumps([SPAWNED_ON, track.name], separators=(",", ":")))
         for track in tracks
     ]
     with h5py.File(labels_path, "a") as f:
@@ -517,7 +552,7 @@ def write_suggestions(
             "frame_idx": suggestion.frame_idx,
             "group": GROUP,
         }
-        suggestion_json = np.string_(json.dumps(suggestion_dict, separators=(",", ":")))
+        suggestion_json = np.bytes_(json.dumps(suggestion_dict, separators=(",", ":")))
         suggestions_json.append(suggestion_json)
 
     with h5py.File(labels_path, "a") as f:
@@ -743,7 +778,7 @@ def write_metadata(labels_path: str, labels: Labels):
     with h5py.File(labels_path, "a") as f:
         grp = f.require_group("metadata")
         grp.attrs["format_id"] = 1.2
-        grp.attrs["json"] = np.string_(json.dumps(md, separators=(",", ":")))
+        grp.attrs["json"] = np.bytes_(json.dumps(md, separators=(",", ":")))
 
 
 def read_points(labels_path: str) -> list[Point]:
@@ -1003,17 +1038,20 @@ def write_lfs(labels_path: str, labels: Labels):
         )
 
 
-def read_labels(labels_path: str) -> Labels:
+def read_labels(labels_path: str, open_videos: bool = True) -> Labels:
     """Read a SLEAP labels file.
 
     Args:
         labels_path: A string path to the SLEAP labels file.
+        open_videos: If `True` (the default), attempt to open the video backend for
+            I/O. If `False`, the backend will not be opened (useful for reading metadata
+            when the video files are not available).
 
     Returns:
         The processed `Labels` object.
     """
     tracks = read_tracks(labels_path)
-    videos = read_videos(labels_path)
+    videos = read_videos(labels_path, open_backend=open_videos)
     skeletons = read_skeletons(labels_path)
     points = read_points(labels_path)
     pred_points = read_pred_points(labels_path)
@@ -1031,7 +1069,7 @@ def read_labels(labels_path: str) -> Labels:
         labeled_frames.append(
             LabeledFrame(
                 video=videos[video_id],
-                frame_idx=frame_idx,
+                frame_idx=int(frame_idx),
                 instances=instances[instance_id_start:instance_id_end],
             )
         )
@@ -1076,7 +1114,8 @@ def write_labels(
     """
     if Path(labels_path).exists():
         Path(labels_path).unlink()
-    if embed is not None:
+
+    if embed:
         embed_videos(labels_path, labels, embed)
     write_videos(labels_path, labels.videos, restore_source=(embed == "source"))
     write_tracks(labels_path, labels.tracks)
