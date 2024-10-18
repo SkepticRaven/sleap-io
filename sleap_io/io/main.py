@@ -108,20 +108,17 @@ def save_labelstudio(labels: Labels, filename: str):
     labelstudio.write_labels(labels, filename)
 
 
-def load_jabs(
-    filename: str, skeleton: Optional[Skeleton] = None, num_frames: Optional[int] = None
-) -> Labels:
+def load_jabs(filename: str, skeleton: Optional[Skeleton] = None) -> Labels:
     """Read JABS-style predictions from a file and return a `Labels` object.
 
     Args:
         filename: Path to the jabs h5 pose file.
         skeleton: An optional `Skeleton` object.
-        num_frames: Number of frames to load from the file.
 
     Returns:
         Parsed labels as a `Labels` instance.
     """
-    return jabs.read_labels(filename, skeleton=skeleton, num_frames=num_frames)
+    return jabs.read_labels(filename, skeleton=skeleton)
 
 
 def save_jabs(labels: Labels, pose_version: int, root_folder: Optional[str] = None):

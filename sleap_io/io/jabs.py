@@ -76,7 +76,6 @@ FLIPPED_OBJECTS = [
 def read_labels(
     labels_path: str,
     skeleton: Optional[Skeleton] = JABS_DEFAULT_SKELETON,
-    num_frames: Optional[int] = None,
 ) -> Labels:
     """Read JABS style pose from a file and return a `Labels` object.
 
@@ -87,7 +86,6 @@ def read_labels(
     Args:
         labels_path: Path to the JABS pose file.
         skeleton: An optional `Skeleton` object. Defaults to JABS pose version 2-6.
-        num_frames: Optional number of frames to read in.
 
     Returns:
         Parsed labels as a `Labels` instance.
@@ -106,12 +104,7 @@ def read_labels(
         raise PermissionError(f"{labels_path} cannot be accessed.")
 
     with h5py.File(labels_path, "r") as pose_file:
-        detected_num_frames = pose_file["poseest/points"].shape[0]
-        if num_frames:
-            if detected_num_frames < num_frames:
-                num_frames = detected_num_frames
-        else:
-            num_frames = detected_num_frames
+        num_frames = pose_file["poseest/points"].shape[0]
 
         try:
             pose_version = pose_file["poseest"].attrs["version"][0]
@@ -275,7 +268,7 @@ def convert_labels(all_labels: Labels, video: Video) -> dict:
 
     # Determine shape of output
     # Low estimate of last frame labeled
-    num_frames = int(max([x.frame_idx for x in labels]) + 1)
+    num_frames = max([x.frame_idx for x in labels]) + 1
     # If there is metadata available for the video, use that
     if video.shape:
         num_frames = max(num_frames, video.shape[0])
